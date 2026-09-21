@@ -15,17 +15,51 @@ PC 브라우저와 모바일(홈 화면 설치형 PWA)에서 같은 주소로 �
 빌드 도구가 필요 없는 순수 HTML/CSS/JS 정적 사이트입니다.
 
 ```
-index.html            화면 구조
+index.html            화면 구조 (로그인 화면 포함)
 css/styles.css        스타일 (PC 2단 / 모바일 서랍형, 다크 모드)
-js/app.js             화면 로직 (채팅방, 메시지, 설정)
-js/translator.js      번역 엔진 (Claude API 호출, 번역 프롬프트)
-js/store.js           저장소 (localStorage, 백업)
+js/app.js             화면 로직 (로그인, 채팅방, 메시지, 동기화)
+js/api.js             서버 통신 (계정 · 번역 · 동기화)
+js/translator.js      번역 요청 (언어 목록, 방향 추정)
+js/store.js           저장소 (계정별 localStorage, 동기화 병합, 백업)
 sw.js                 서비스 워커 (오프라인에서 기록 열람)
 manifest.webmanifest  PWA 설치 정보
+worker/index.js       백엔드 (Cloudflare Worker + D1)
 ```
 
-번역은 [Anthropic Claude API](https://docs.claude.com)를 브라우저에서 직접 호출합니다.
-기본 모델은 `claude-opus-5`이며 설정에서 Sonnet 5 / Haiku 4.5로 바꿀 수 있습니다.
+번역은 백엔드가 [Anthropic Claude API](https://docs.claude.com)를 대신 호출합니다.
+기본 모델은 `claude-sonnet-5`이며 설정에서 Opus 5 / Haiku 4.5로 바꿀 수 있습니다.
+
+## 계정과 동기화
+
+앞단 PWA(GitHub Pages)와 백엔드(Cloudflare Worker + D1)로 나뉘어 있습니다.
+
+```
+[PC · 모바일 PWA]  ──Bearer 토큰──>  [Cloudflare Worker]
+                                    ├─ ANTHROPIC_API_KEY (서버 시크릿)
+                                    └─ D1: users · sessions · invites · rooms · messages · usage_daily
+```
+
+- **API 키가 기기에 내려가지 않습니다.** Worker 시크릿에만 있고 앱은 키를 모릅니다.
+- 비밀번호는 PBKDF2-SHA256(10만 회, 계정별 salt)로 해시해 저장합니다. Workers는 반복 횟수를 10만 회까지만 허용합니다.
+- 세션 토큰은 60일짜리며 서버에는 SHA-256 해시만 보관합니다.
+- **가입에는 초대 코드가 필요합니다.** 단, 첫 계정은 코드 없이 만들어지고 자동으로 관리자가 됩니다.
+  관리자는 설정 화면에서 코드를 발급합니다 (코드당 1명, 30일 만료).
+- 계정당 하루 300건 제한이 걸려 있습니다 (`DEFAULT_DAILY_LIMIT`).
+- 동기화는 `updatedAt`이 늘은 쪽이 이기는 방식입니다. 삭제는 `deleted` 표시로 남겨 다른 기기에도 전파됩니다.
+- 앱을 열 때·탭을 다시 볼 때·변경 후 1.2초에 동기화합니다.
+
+### 백엔드 배포
+
+wrangler 없이 Cloudflare 대시보드만으로 배포했습니다.
+
+1. **D1 → Create Database**: `biz-translator-db` (테이블은 Worker가 첫 요청에 자동 생성)
+2. **Workers → Create → Hello World**: `biz-translator-api`
+3. **Bindings**: D1 database, 변수명 `DB` → `biz-translator-db`
+4. **Settings → Variables and Secrets**: `ANTHROPIC_API_KEY` (Secret 체크 필수)
+5. **Edit code**: `worker/index.js` 내용을 붙여넣고 Deploy
+
+앞단 주소가 바뀜면 두 곳을 고쳐야 합니다.
+`worker/index.js`의 `DEFAULT_ORIGINS`(CORS)와 `index.html`의 CSP `connect-src`입니다.
 
 ## 로컬 PC에서 실행
 
@@ -35,7 +69,11 @@ ES 모듈을 쓰기 때문에 `index.html`을 더블클릭하면 동작하지 �
 python -m http.server 8765
 ```
 
-브라우저에서 <http://localhost:8765> 접속 → 설정에서 API 키 입력.
+브라우저에서 <http://localhost:8765> 접속 → 계정으로 로그인.
+
+로컬 주소도 Worker의 `DEFAULT_ORIGINS`에 들어 있어야 CORS가 통과합니다.
+
+> Windows에서 `python -m http.server`가 `_socket` 오류로 죽는다면 환경변수 `PYTHONHOME` · `PYTHONPATH`를 비우고 실행하세요.
 
 ## GitHub Pages 배포 (PC + 모바일 공용 주소)
 
@@ -51,11 +89,12 @@ python -m http.server 8765
 
 ## API 키와 보안
 
-- [Anthropic Console](https://console.anthropic.com)에서 **이 앱 전용 키**를 발급하고 **월 지출 한도**를 설정하세요.
-- 키는 입력한 기기의 브라우저(localStorage)에만 저장되고, 번역 요청 때 `api.anthropic.com`으로만 전송됩니다. 저장소 코드나 백업 파일에는 들어가지 않습니다.
+- [Anthropic Console](https://platform.claude.com)에서 **이 앱 전용 키**를 발급하고 **월 지출 한도**를 설정하세요.
+- 키는 Cloudflare Worker의 시크릿에만 있습니다. 브라저·저장소 코드·백업 파일 어느 곳에도 없습니다.
 - **키를 코드에 넣어 커밋하지 마세요.** GitHub Pages 무료 플랜은 공개 저장소입니다.
-- 외부 스크립트를 쓰지 않고 CSP로 연결 대상을 제한해 두었습니다. 그래도 공용 PC에서는 사용 후 설정에서 키를 지우세요.
-- 여러 사람과 함께 쓰려면 키를 서버에 숨기는 프록시가 필요합니다 (아래 로드맵 2단계).
+- 외부 스크립트를 쓰지 않고 CSP로 연결 대상을 Worker 주소 하나로 제한해 두었습니다.
+- 번역 대상은 `<message_to_translate>` 태그로 격리하고 입력 속 동일 태그는 치환합니다. 프롬프트 인젝션 문장도 지시로 따르지 않고 그대로 번역합니다.
+- 공용 PC에서는 사용 후 설정 → 로그아웃 하세요.
 
 ## 번역 품질 점검표
 
