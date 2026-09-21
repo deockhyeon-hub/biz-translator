@@ -67,7 +67,7 @@ export function loadState() {
 export const saveState = (state) => write(STATE_KEY, state);
 
 export function loadSettings() {
-  return { apiKey: "", model: "claude-opus-5", ...read(SETTINGS_KEY, {}) };
+  return { apiKey: "", model: "claude-sonnet-5", ...read(SETTINGS_KEY, {}) };
 }
 
 export const saveSettings = (settings) => write(SETTINGS_KEY, settings);
