@@ -1,8 +1,9 @@
-// 상태 저장소: 채팅방/기록과 설정을 이 기기의 localStorage에 보관한다.
-// API 키는 설정 쪽에만 두어 백업 파일에 섞이지 않게 한다.
+// 상태 저장소: 채팅방/기록을 계정별로 이 기기의 localStorage에 보관한다.
+// 서버와 동기화하므로 각 항목에 updatedAt(마지막 수정 시각)과 deleted(삭제 표시)를 함께 둔다.
 
-const STATE_KEY = "biztr.state.v1";
+const LEGACY_STATE_KEY = "biztr.state.v1";
 const SETTINGS_KEY = "biztr.settings.v1";
+const statePrefix = "biztr.state.v2.";
 
 const uid = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
@@ -25,11 +26,51 @@ function write(key, value) {
 }
 
 export function newRoom({ name, lang = "EN", tone = "neutral", context = "", glossary = "" } = {}) {
-  return { id: uid(), name: name || "새 채팅방", lang, tone, context, glossary, messages: [], createdAt: Date.now() };
+  const now = Date.now();
+  return {
+    id: uid(),
+    name: name || "새 채팅방",
+    lang,
+    tone,
+    context,
+    glossary,
+    messages: [],
+    createdAt: now,
+    updatedAt: now,
+    deleted: false,
+  };
 }
 
 export function newMessage(source, direction) {
-  return { id: uid(), source, direction, translation: "", note: "", status: "pending", error: "", ts: Date.now() };
+  const now = Date.now();
+  return {
+    id: uid(),
+    source,
+    direction,
+    translation: "",
+    note: "",
+    status: "pending",
+    error: "",
+    ts: now,
+    updatedAt: now,
+    deleted: false,
+  };
+}
+
+function normalizeMessage(m) {
+  return {
+    id: typeof m.id === "string" ? m.id : uid(),
+    source: m.source,
+    direction: m.direction === "target->ko" ? "target->ko" : "ko->target",
+    translation: typeof m.translation === "string" ? m.translation : "",
+    note: typeof m.note === "string" ? m.note : "",
+    // 새로고침으로 끊긴 요청은 재시도할 수 있게 오류로 돌린다.
+    status: m.status === "done" ? "done" : "error",
+    error: m.status === "done" ? "" : m.error || "번역이 중단되었습니다.",
+    ts: Number(m.ts) || Date.now(),
+    updatedAt: Number(m.updatedAt) || Number(m.ts) || Date.now(),
+    deleted: !!m.deleted,
+  };
 }
 
 function normalizeRooms(rooms) {
@@ -40,40 +81,65 @@ function normalizeRooms(rooms) {
       ...newRoom(r),
       id: typeof r.id === "string" ? r.id : uid(),
       createdAt: Number(r.createdAt) || Date.now(),
+      updatedAt: Number(r.updatedAt) || Number(r.createdAt) || Date.now(),
+      deleted: !!r.deleted,
       messages: (Array.isArray(r.messages) ? r.messages : [])
         .filter((m) => m && typeof m.source === "string")
-        .map((m) => ({
-          id: typeof m.id === "string" ? m.id : uid(),
-          source: m.source,
-          direction: m.direction === "target->ko" ? "target->ko" : "ko->target",
-          translation: typeof m.translation === "string" ? m.translation : "",
-          note: typeof m.note === "string" ? m.note : "",
-          // 새로고침으로 끊긴 요청은 재시도할 수 있게 오류로 돌린다.
-          status: m.status === "done" ? "done" : "error",
-          error: m.status === "done" ? "" : (m.error || "번역이 중단되었습니다."),
-          ts: Number(m.ts) || Date.now(),
-        })),
+        .map(normalizeMessage),
     }));
 }
 
-export function loadState() {
-  const saved = read(STATE_KEY, null);
-  const rooms = normalizeRooms(saved?.rooms);
-  if (!rooms.length) rooms.push(newRoom({ name: "영어 거래처", lang: "EN" }));
-  const activeRoomId = rooms.some((r) => r.id === saved?.activeRoomId) ? saved.activeRoomId : rooms[0].id;
-  return { rooms, activeRoomId };
+export function stateKey(userId) {
+  return statePrefix + (userId || "local");
 }
 
-export const saveState = (state) => write(STATE_KEY, state);
+export function loadState(userId) {
+  const key = stateKey(userId);
+  let saved = read(key, null);
+
+  // 로그인 이전에 이 기기에서 쓰던 기록을 첫 로그인 때 한 번 옮겨 온다.
+  if (!saved) {
+    const legacy = read(LEGACY_STATE_KEY, null);
+    if (legacy?.rooms?.length) saved = legacy;
+  }
+
+  const rooms = normalizeRooms(saved?.rooms);
+  const alive = rooms.filter((r) => !r.deleted);
+  if (!alive.length) rooms.push(newRoom({ name: "영어 거래처", lang: "EN" }));
+
+  const candidates = rooms.filter((r) => !r.deleted);
+  const activeRoomId = candidates.some((r) => r.id === saved?.activeRoomId)
+    ? saved.activeRoomId
+    : candidates[0].id;
+
+  return { rooms, activeRoomId, lastSyncAt: Number(saved?.lastSyncAt) || 0 };
+}
+
+export function saveState(userId, state) {
+  return write(stateKey(userId), {
+    rooms: state.rooms,
+    activeRoomId: state.activeRoomId,
+    lastSyncAt: state.lastSyncAt || 0,
+  });
+}
 
 export function loadSettings() {
-  return { apiKey: "", model: "claude-sonnet-5", ...read(SETTINGS_KEY, {}) };
+  return { model: "claude-sonnet-5", ...read(SETTINGS_KEY, {}) };
 }
 
 export const saveSettings = (settings) => write(SETTINGS_KEY, settings);
 
 export function exportBackup(state) {
-  return JSON.stringify({ app: "biz-translator", version: 1, exportedAt: new Date().toISOString(), rooms: state.rooms }, null, 2);
+  return JSON.stringify(
+    {
+      app: "biz-translator",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      rooms: state.rooms.filter((r) => !r.deleted),
+    },
+    null,
+    2,
+  );
 }
 
 export function parseBackup(json) {
@@ -82,4 +148,97 @@ export function parseBackup(json) {
   const rooms = normalizeRooms(data.rooms);
   if (!rooms.length) throw new Error("백업에 채팅방이 없습니다.");
   return rooms;
+}
+
+/* ---------- 동기화용 변환 ---------- */
+
+/** 서버로 보낼 변경분만 추린다. */
+export function collectChanges(state, since) {
+  const rooms = state.rooms
+    .filter((r) => (r.updatedAt || 0) > since)
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      lang: r.lang,
+      tone: r.tone,
+      context: r.context,
+      glossary: r.glossary,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      deleted: r.deleted ? 1 : 0,
+    }));
+
+  const messages = [];
+  for (const room of state.rooms) {
+    for (const m of room.messages) {
+      if ((m.updatedAt || 0) <= since) continue;
+      if (m.status === "pending") continue; // 번역 중인 건 아직 보내지 않는다
+      messages.push({
+        id: m.id,
+        roomId: room.id,
+        ts: m.ts,
+        source: m.source,
+        direction: m.direction,
+        translation: m.translation,
+        note: m.note,
+        error: m.error,
+        updatedAt: m.updatedAt,
+        deleted: m.deleted ? 1 : 0,
+      });
+    }
+  }
+  return { rooms, messages };
+}
+
+/** 서버에서 받은 변경분을 로컬 상태에 합친다. 최신 updatedAt이 이긴다. */
+export function mergeFromServer(state, payload) {
+  let maxSeen = 0;
+
+  for (const sr of payload.rooms || []) {
+    maxSeen = Math.max(maxSeen, sr.updated_at || 0);
+    const local = state.rooms.find((r) => r.id === sr.id);
+    const fields = {
+      name: sr.name,
+      lang: sr.lang,
+      tone: sr.tone || "neutral",
+      context: sr.context || "",
+      glossary: sr.glossary || "",
+      createdAt: sr.created_at || Date.now(),
+      updatedAt: sr.updated_at || Date.now(),
+      deleted: !!sr.deleted,
+    };
+    if (!local) {
+      state.rooms.push({ ...newRoom(fields), ...fields, id: sr.id, messages: [] });
+    } else if ((sr.updated_at || 0) > (local.updatedAt || 0)) {
+      Object.assign(local, fields);
+    }
+  }
+
+  for (const sm of payload.messages || []) {
+    maxSeen = Math.max(maxSeen, sm.updated_at || 0);
+    const room = state.rooms.find((r) => r.id === sm.room_id);
+    if (!room) continue;
+    const fields = {
+      source: sm.source,
+      direction: sm.direction === "target->ko" ? "target->ko" : "ko->target",
+      translation: sm.translation || "",
+      note: sm.note || "",
+      error: sm.error || "",
+      status: sm.translation ? "done" : "error",
+      ts: sm.ts || Date.now(),
+      updatedAt: sm.updated_at || Date.now(),
+      deleted: !!sm.deleted,
+    };
+    if (!fields.translation && !fields.error) fields.error = "번역이 중단되었습니다.";
+
+    const local = room.messages.find((m) => m.id === sm.id);
+    if (!local) {
+      room.messages.push({ id: sm.id, ...fields });
+    } else if ((sm.updated_at || 0) > (local.updatedAt || 0)) {
+      if (local.status !== "pending") Object.assign(local, fields);
+    }
+  }
+
+  for (const room of state.rooms) room.messages.sort((a, b) => a.ts - b.ts);
+  return maxSeen;
 }

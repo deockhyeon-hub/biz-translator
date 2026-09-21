@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; connect-src 'self' https://api.anthropic.com; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'">
+        content="default-src 'self'; connect-src 'self' https://biz-translator-api.deockhyeon.workers.dev; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'">
   <meta name="theme-color" content="#1f3a5f">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Biz 번역">
@@ -16,7 +16,44 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <div id="app">
+  <!-- 로그인 / 회원가입 -->
+  <div id="auth" class="auth-screen" hidden>
+    <div class="auth-card">
+      <div class="auth-brand">
+        <img src="icons/icon.svg" alt="" width="36" height="36">
+        <span>Biz 번역</span>
+      </div>
+      <h1 id="auth-title">로그인</h1>
+      <p id="auth-sub" class="hint">로그인하면 이 계정의 채팅방과 기록을 그대로 이어서 씁니다.</p>
+
+      <form id="auth-form" novalidate>
+        <label>이메일
+          <input id="auth-email" type="email" autocomplete="username" inputmode="email" required>
+        </label>
+        <label>비밀번호
+          <input id="auth-password" type="password" autocomplete="current-password" minlength="8" required>
+        </label>
+
+        <div id="auth-signup-fields" hidden>
+          <label>이름 (선택)
+            <input id="auth-name" type="text" maxlength="40" autocomplete="name" placeholder="예: 김덕현">
+          </label>
+          <label>초대 코드
+            <input id="auth-invite" type="text" maxlength="20" autocomplete="off" spellcheck="false" placeholder="ABCDE-12345">
+          </label>
+          <p class="hint">초대 코드는 관리자가 발급합니다. 첫 계정은 코드 없이 만들 수 있고 자동으로 관리자가 됩니다.</p>
+        </div>
+
+        <p id="auth-error" class="auth-error" role="alert" hidden></p>
+        <button id="auth-submit" type="submit" class="primary-btn auth-submit">로그인</button>
+      </form>
+
+      <button id="auth-toggle" type="button" class="link-btn">계정이 없습니다. 회원가입</button>
+      <p class="hint auth-foot">비밀번호는 서버에 해시로만 저장됩니다. 번역용 API 키는 서버에만 있고 이 앱에는 저장되지 않습니다.</p>
+    </div>
+  </div>
+
+  <div id="app" hidden>
     <!-- 왼쪽: 채팅방 목록 -->
     <aside id="sidebar" aria-label="채팅방 목록">
       <div class="sidebar-head">
@@ -29,7 +66,7 @@
       <button id="btn-new-room" class="primary-btn">＋ 새 채팅방</button>
       <ul id="room-list"></ul>
       <div class="sidebar-foot">
-        <button id="btn-settings" class="ghost-btn">⚙ 설정 · API 키</button>
+        <button id="btn-settings" class="ghost-btn">⚙ 설정 · 계정</button>
       </div>
     </aside>
     <div id="backdrop" hidden></div>
@@ -90,11 +127,16 @@
   <dialog id="dlg-settings">
     <form method="dialog" class="dlg-body">
       <h2>설정</h2>
-      <label>Anthropic API 키
-        <input id="set-f-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-...">
-      </label>
-      <p class="hint">키는 이 기기의 브라우저에만 저장되며 번역 요청 시 Anthropic API로만 전송됩니다.
-        전용 키를 발급하고 콘솔에서 월 지출 한도를 설정해 두세요.</p>
+
+      <div class="account-box">
+        <div>
+          <strong id="set-account-email"></strong>
+          <span id="set-account-role" class="role-tag"></span>
+        </div>
+        <button id="set-f-logout" type="button" class="ghost-btn">로그아웃</button>
+      </div>
+      <p class="hint">채팅방과 기록은 계정에 저장되어 PC와 휴대폰에서 자동으로 동기화됩니다.</p>
+
       <label>번역 모델
         <select id="set-f-model">
           <option value="claude-opus-5">Claude Opus 5 — 최고 품질</option>
@@ -102,14 +144,28 @@
           <option value="claude-haiku-4-5">Claude Haiku 4.5 — 가장 저렴</option>
         </select>
       </label>
+
+      <div id="set-admin" class="admin-box" hidden>
+        <h3>직원 초대</h3>
+        <p class="hint">초대 코드를 만들어 직원에게 전달하세요. 코드 하나당 한 명이 가입할 수 있고 30일 뒤 만료됩니다.</p>
+        <div class="invite-row">
+          <label class="invite-count">개수
+            <input id="set-invite-count" type="number" min="1" max="20" value="1">
+          </label>
+          <button id="set-invite-create" type="button" class="ghost-btn">코드 만들기</button>
+        </div>
+        <pre id="set-invite-result" class="invite-result" hidden></pre>
+      </div>
+
       <div class="backup">
         <h3>백업</h3>
-        <p class="hint">채팅 기록은 이 기기에만 저장됩니다. 기기를 바꾸거나 브라우저 데이터를 지우기 전에 내보내 두세요. (API 키는 백업에 포함되지 않습니다)</p>
+        <p class="hint">기록은 서버에 보관되지만, 필요하면 파일로 내려받아 둘 수 있습니다.</p>
         <button id="set-f-export" type="button" class="ghost-btn">기록 내보내기 (JSON)</button>
         <button id="set-f-import" type="button" class="ghost-btn">기록 가져오기</button>
         <input id="set-f-file" type="file" accept="application/json,.json" hidden>
       </div>
-      <p class="hint only-ios">iPhone/iPad: Safari의 공유 버튼 → "홈 화면에 추가"로 설치한 뒤 사용하세요. 설치하지 않으면 7일간 미접속 시 기록이 삭제될 수 있습니다.</p>
+
+      <p class="hint only-ios">iPhone/iPad: Safari의 공유 버튼 → "홈 화면에 추가"로 설치한 뒤 사용하세요.</p>
       <div class="dlg-actions">
         <span class="spacer"></span>
         <button type="button" class="ghost-btn dlg-cancel">취소</button>

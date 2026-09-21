@@ -2,25 +2,42 @@ import { LANGUAGES, languageByCode, looksKorean, translate } from "./translator.
 import {
   loadState, saveState, loadSettings, saveSettings,
   newRoom, newMessage, exportBackup, parseBackup,
+  collectChanges, mergeFromServer,
 } from "./store.js";
+import * as api from "./api.js";
 
 const $ = (id) => document.getElementById(id);
 
-const state = loadState();
+let auth = api.loadAuth();          // { token, user, expiresAt }
+let state = null;                    // 로그인 후 채워진다
 let settings = loadSettings();
-let editingRoomId = null; // null이면 새 채팅방 생성 중
+let editingRoomId = null;            // null이면 새 채팅방 생성 중
+let authMode = "login";              // "login" | "signup"
+let syncing = false;
+let syncTimer = null;
 
 const el = {
-  app: $("app"), backdrop: $("backdrop"),
+  app: $("app"), backdrop: $("backdrop"), auth: $("auth"),
   roomList: $("room-list"), roomName: $("room-name"), roomMeta: $("room-meta"),
   messages: $("messages"), input: $("input"), send: $("btn-send"),
   dlgRoom: $("dlg-room"), dlgSettings: $("dlg-settings"), toast: $("toast"),
 };
 
-const activeRoom = () => state.rooms.find((r) => r.id === state.activeRoomId) ?? state.rooms[0];
+const liveRooms = () => state.rooms.filter((r) => !r.deleted);
+const liveMessages = (room) => room.messages.filter((m) => !m.deleted);
 
-function persist() {
-  if (!saveState(state)) toast("저장 공간이 부족합니다. 설정에서 기록을 내보낸 뒤 오래된 채팅방을 정리해 주세요.");
+function activeRoom() {
+  const rooms = liveRooms();
+  return rooms.find((r) => r.id === state.activeRoomId) ?? rooms[0];
+}
+
+const touch = (item) => { item.updatedAt = Date.now(); };
+
+function persist({ sync = true } = {}) {
+  if (!saveState(auth?.user?.id, state)) {
+    toast("저장 공간이 부족합니다. 설정에서 기록을 내보낸 뒤 오래된 채팅방을 정리해 주세요.");
+  }
+  if (sync) scheduleSync();
 }
 
 let toastTimer;
@@ -38,15 +55,57 @@ function h(tag, className, text) {
   return node;
 }
 
+/* ---------- 동기화 ---------- */
+
+function scheduleSync() {
+  if (!auth?.token) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => { runSync(); }, 1200);
+}
+
+async function runSync({ silent = true } = {}) {
+  if (!auth?.token || syncing || !state) return;
+  syncing = true;
+  try {
+    const since = state.lastSyncAt || 0;
+
+    const changes = collectChanges(state, since);
+    if (changes.rooms.length || changes.messages.length) {
+      await api.syncPush(auth.token, changes);
+    }
+
+    const pulled = await api.syncPull(auth.token, since);
+    const maxSeen = mergeFromServer(state, pulled);
+    state.lastSyncAt = Math.max(since, maxSeen);
+
+    // 현재 방이 다른 기기에서 삭제됐을 수 있다.
+    if (!activeRoom()) {
+      if (!liveRooms().length) state.rooms.push(newRoom({ name: "영어 거래처", lang: "EN" }));
+      state.activeRoomId = liveRooms()[0].id;
+    }
+
+    saveState(auth.user.id, state);
+    renderAll();
+  } catch (err) {
+    if (err.status === 401) {
+      handleSignedOut("로그인이 만료되었습니다. 다시 로그인해 주세요.");
+      return;
+    }
+    if (!silent) toast(err.message || "동기화하지 못했습니다.");
+  } finally {
+    syncing = false;
+  }
+}
+
 /* ---------- 렌더링 ---------- */
 
 function renderRooms() {
-  el.roomList.replaceChildren(...state.rooms.map((room) => {
+  el.roomList.replaceChildren(...liveRooms().map((room) => {
     const lang = languageByCode(room.lang);
     const li = h("li", room.id === state.activeRoomId ? "active" : "");
     li.dataset.id = room.id;
     const info = h("div", "room-info");
-    const last = room.messages.at(-1);
+    const last = liveMessages(room).at(-1);
     info.append(h("strong", "", room.name), h("span", "", last ? last.source : `한국어 ↔ ${lang.label}`));
     li.append(h("div", "room-badge", lang.code), info);
     return li;
@@ -55,6 +114,7 @@ function renderRooms() {
 
 function renderHead() {
   const room = activeRoom();
+  if (!room) return;
   const lang = languageByCode(room.lang);
   el.roomName.textContent = room.name;
   el.roomMeta.textContent = `한국어 ↔ ${lang.label}`;
@@ -96,7 +156,9 @@ function messageNode(msg) {
 
 function renderMessages({ scroll = true } = {}) {
   const room = activeRoom();
-  if (!room.messages.length) {
+  if (!room) return;
+  const list = liveMessages(room);
+  if (!list.length) {
     const empty = h("div", "empty");
     const lang = languageByCode(room.lang).label;
     empty.append(
@@ -106,11 +168,12 @@ function renderMessages({ scroll = true } = {}) {
     el.messages.replaceChildren(empty);
     return;
   }
-  el.messages.replaceChildren(...room.messages.map(messageNode));
+  el.messages.replaceChildren(...list.map(messageNode));
   if (scroll) el.messages.scrollTop = el.messages.scrollHeight;
 }
 
 function renderAll() {
+  if (!state) return;
   renderRooms();
   renderHead();
   renderMessages();
@@ -124,17 +187,28 @@ async function runTranslation(room, msg) {
   if (room.id === state.activeRoomId) renderMessages();
 
   try {
-    const history = room.messages.slice(0, room.messages.indexOf(msg));
+    const history = liveMessages(room).slice(0, liveMessages(room).indexOf(msg));
     const result = await translate({
-      apiKey: settings.apiKey, model: settings.model, room, text: msg.source, history,
+      token: auth.token, model: settings.model, room, text: msg.source, history,
     });
-    Object.assign(msg, { status: "done", direction: result.direction, translation: result.translation, note: result.note });
+    Object.assign(msg, {
+      status: "done",
+      direction: result.direction,
+      translation: result.translation,
+      note: result.note,
+      error: "",
+    });
   } catch (err) {
+    if (err.status === 401) {
+      handleSignedOut("로그인이 만료되었습니다. 다시 로그인해 주세요.");
+      return;
+    }
     Object.assign(msg, { status: "error", error: err.message || "알 수 없는 오류가 발생했습니다." });
   }
 
   // 번역 중에 메시지나 채팅방이 삭제됐을 수 있다.
   if (!state.rooms.includes(room) || !room.messages.includes(msg)) return;
+  touch(msg);
   persist();
   renderRooms();
   if (room.id === state.activeRoomId) renderMessages();
@@ -143,17 +217,13 @@ async function runTranslation(room, msg) {
 function send() {
   const text = el.input.value.trim();
   if (!text) return;
-  if (!settings.apiKey) {
-    toast("먼저 API 키를 입력해 주세요.");
-    openSettings();
-    return;
-  }
   const room = activeRoom();
+  if (!room) return;
   const msg = newMessage(text, looksKorean(text) ? "ko->target" : "target->ko");
   room.messages.push(msg);
   el.input.value = "";
   autosize();
-  persist();
+  persist({ sync: false });
   runTranslation(room, msg);
 }
 
@@ -170,7 +240,7 @@ async function copyText(text) {
 
 function selectRoom(id) {
   state.activeRoomId = id;
-  persist();
+  persist({ sync: false });
   closeSidebar();
   renderAll();
 }
@@ -197,7 +267,9 @@ function saveRoomDialog() {
     glossary: $("room-f-glossary").value.trim(),
   };
   if (editingRoomId) {
-    Object.assign(state.rooms.find((r) => r.id === editingRoomId), fields);
+    const room = state.rooms.find((r) => r.id === editingRoomId);
+    Object.assign(room, fields);
+    touch(room);
   } else {
     const room = newRoom(fields);
     state.rooms.unshift(room);
@@ -211,9 +283,10 @@ function saveRoomDialog() {
 function deleteRoom() {
   const room = state.rooms.find((r) => r.id === editingRoomId);
   if (!room || !confirm(`'${room.name}' 채팅방과 기록을 모두 삭제할까요?`)) return;
-  state.rooms.splice(state.rooms.indexOf(room), 1);
-  if (!state.rooms.length) state.rooms.push(newRoom({ name: "영어 거래처", lang: "EN" }));
-  if (state.activeRoomId === room.id) state.activeRoomId = state.rooms[0].id;
+  room.deleted = true;
+  touch(room);
+  if (!liveRooms().length) state.rooms.push(newRoom({ name: "영어 거래처", lang: "EN" }));
+  if (state.activeRoomId === room.id) state.activeRoomId = liveRooms()[0].id;
   el.dlgRoom.close("cancel");
   persist();
   renderAll();
@@ -222,9 +295,25 @@ function deleteRoom() {
 /* ---------- 설정 · 백업 ---------- */
 
 function openSettings() {
-  $("set-f-key").value = settings.apiKey;
   $("set-f-model").value = settings.model;
+  $("set-account-email").textContent = auth?.user?.email ?? "";
+  $("set-account-role").textContent = auth?.user?.role === "admin" ? "관리자" : "직원";
+  $("set-admin").hidden = auth?.user?.role !== "admin";
+  $("set-invite-result").hidden = true;
+  $("set-invite-result").textContent = "";
   el.dlgSettings.showModal();
+}
+
+async function issueInvites() {
+  try {
+    const count = Number($("set-invite-count").value) || 1;
+    const data = await api.createInvites(auth.token, { count, expiresDays: 30 });
+    const box = $("set-invite-result");
+    box.hidden = false;
+    box.textContent = `${data.codes.join("\n")}\n\n30일 안에 사용해야 합니다. 한 코드는 한 명만 쓸 수 있습니다.`;
+  } catch (err) {
+    toast(err.message || "초대 코드를 만들지 못했습니다.");
+  }
 }
 
 function downloadBackup() {
@@ -240,6 +329,8 @@ async function importBackup(file) {
   try {
     const rooms = parseBackup(await file.text());
     for (const room of rooms) {
+      touch(room);
+      for (const m of room.messages) touch(m);
       const index = state.rooms.findIndex((r) => r.id === room.id);
       if (index >= 0) state.rooms[index] = room;
       else state.rooms.push(room);
@@ -250,6 +341,85 @@ async function importBackup(file) {
   } catch (err) {
     toast(err.message || "백업 파일을 읽지 못했습니다.");
   }
+}
+
+/* ---------- 로그인 ---------- */
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const signup = mode === "signup";
+  $("auth-title").textContent = signup ? "회원가입" : "로그인";
+  $("auth-sub").textContent = signup
+    ? "가입 후에는 PC와 휴대폰 어디서 열어도 같은 기록을 씁니다."
+    : "로그인하면 이 계정의 채팅방과 기록을 그대로 이어서 씁니다.";
+  $("auth-signup-fields").hidden = !signup;
+  $("auth-submit").textContent = signup ? "가입하고 시작하기" : "로그인";
+  $("auth-toggle").textContent = signup ? "이미 계정이 있습니다. 로그인" : "계정이 없습니다. 회원가입";
+  $("auth-password").autocomplete = signup ? "new-password" : "current-password";
+  showAuthError("");
+}
+
+function showAuthError(message) {
+  const box = $("auth-error");
+  box.textContent = message;
+  box.hidden = !message;
+}
+
+function showAuthScreen(message) {
+  el.auth.hidden = false;
+  el.app.hidden = true;
+  if (message) showAuthError(message);
+  $("auth-email").focus();
+}
+
+function hideAuthScreen() {
+  el.auth.hidden = true;
+  el.app.hidden = false;
+}
+
+async function submitAuth(event) {
+  event.preventDefault();
+  const email = $("auth-email").value.trim();
+  const password = $("auth-password").value;
+  const btn = $("auth-submit");
+  btn.disabled = true;
+  showAuthError("");
+
+  try {
+    const payload = authMode === "signup"
+      ? {
+          email,
+          password,
+          name: $("auth-name").value.trim(),
+          invite: $("auth-invite").value.trim(),
+        }
+      : { email, password };
+    const data = authMode === "signup" ? await api.signup(payload) : await api.login(payload);
+    auth = { token: data.token, user: data.user, expiresAt: data.expiresAt };
+    api.saveAuth(auth);
+    $("auth-password").value = "";
+    startApp();
+  } catch (err) {
+    showAuthError(err.message || "로그인하지 못했습니다.");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function handleSignedOut(message) {
+  api.clearAuth();
+  auth = null;
+  state = null;
+  clearTimeout(syncTimer);
+  showAuthScreen(message || "");
+  setAuthMode("login");
+}
+
+async function signOut() {
+  const token = auth?.token;
+  el.dlgSettings.close("cancel");
+  handleSignedOut("로그아웃했습니다.");
+  if (token) api.logout(token).catch(() => { /* 서버 정리는 실패해도 무방 */ });
 }
 
 /* ---------- 기타 UI ---------- */
@@ -264,6 +434,9 @@ function autosize() {
 }
 
 function bindEvents() {
+  $("auth-form").addEventListener("submit", submitAuth);
+  $("auth-toggle").addEventListener("click", () => setAuthMode(authMode === "signup" ? "login" : "signup"));
+
   $("btn-new-room").addEventListener("click", () => openRoomDialog(null));
   $("btn-room-settings").addEventListener("click", () => openRoomDialog(activeRoom()));
   $("btn-settings").addEventListener("click", openSettings);
@@ -285,7 +458,8 @@ function bindEvents() {
     if (btn.dataset.action === "copy") copyText(msg.translation);
     if (btn.dataset.action === "retry") runTranslation(room, msg);
     if (btn.dataset.action === "delete") {
-      room.messages.splice(room.messages.indexOf(msg), 1);
+      msg.deleted = true;
+      touch(msg);
       persist();
       renderRooms();
       renderMessages({ scroll: false });
@@ -296,8 +470,8 @@ function bindEvents() {
   el.input.addEventListener("input", autosize);
   el.input.addEventListener("keydown", (e) => {
     // 한글 조합 중 Enter는 전송하지 않는다. 터치 기기에서는 Enter가 줄바꿈이다.
-    const touch = matchMedia("(pointer: coarse)").matches;
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !touch) {
+    const touchDevice = matchMedia("(pointer: coarse)").matches;
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !touchDevice) {
       e.preventDefault();
       send();
     }
@@ -312,7 +486,7 @@ function bindEvents() {
   $("room-f-delete").addEventListener("click", deleteRoom);
 
   el.dlgSettings.querySelector("form").addEventListener("submit", () => {
-    settings = { ...settings, apiKey: $("set-f-key").value.trim(), model: $("set-f-model").value };
+    settings = { ...settings, model: $("set-f-model").value };
     if (!saveSettings(settings)) toast("설정을 저장하지 못했습니다.");
     else toast("설정을 저장했습니다.");
   });
@@ -323,6 +497,23 @@ function bindEvents() {
     if (file) importBackup(file);
     e.target.value = "";
   });
+  $("set-f-logout").addEventListener("click", signOut);
+  $("set-invite-create").addEventListener("click", issueInvites);
+
+  // 다른 기기에서 바뀐 내용을 가져온다.
+  window.addEventListener("focus", () => { runSync(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") runSync();
+  });
+}
+
+function startApp() {
+  hideAuthScreen();
+  state = loadState(auth.user.id);
+  saveState(auth.user.id, state);
+  renderAll();
+  autosize();
+  runSync({ silent: false });
 }
 
 function init() {
@@ -334,14 +525,14 @@ function init() {
   if (/iPad|iPhone|iPod/.test(navigator.userAgent)) document.documentElement.classList.add("is-ios");
 
   bindEvents();
-  persist(); // 중단됐던 번역을 '오류' 상태로 정리한 결과를 저장
-  renderAll();
-  autosize();
+  setAuthMode("login");
 
   if ("serviceWorker" in navigator && location.protocol === "https:") {
     navigator.serviceWorker.register("sw.js").catch(() => { /* 오프라인 캐시 없이도 동작 */ });
   }
-  if (!settings.apiKey) openSettings();
+
+  if (auth?.token) startApp();
+  else showAuthScreen();
 }
 
 init();

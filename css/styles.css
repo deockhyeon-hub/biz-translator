@@ -236,3 +236,174 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   .msg { max-width: 88%; }
   #btn-room-settings { padding: 7px 10px; font-size: 13px; }
 }
+
+/* ---------- 로그인 / 회원가입 ---------- */
+.auth-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+  background: var(--bg);
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 26px 22px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .06);
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--navy);
+  margin-bottom: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .auth-brand { color: var(--text); }
+}
+
+.auth-card h1 {
+  margin: 0 0 6px;
+  font-size: 21px;
+}
+
+.auth-card form { margin-top: 16px; }
+
+.auth-card label {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.auth-card input {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  font-weight: 400;
+  color: var(--text);
+}
+
+.auth-card input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.auth-submit {
+  width: 100%;
+  padding: 12px;
+  margin-top: 4px;
+}
+
+.auth-error {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: rgba(201, 55, 44, .1);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.link-btn {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 8px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 13.5px;
+  text-decoration: underline;
+}
+
+.auth-foot {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
+/* ---------- 설정: 계정 · 초대 ---------- */
+.account-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--bg);
+  margin-bottom: 8px;
+}
+
+.account-box strong {
+  display: block;
+  word-break: break-all;
+}
+
+.role-tag {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11.5px;
+}
+
+.admin-box {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.admin-box h3 { margin: 0 0 6px; font-size: 14px; }
+
+.invite-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.invite-count {
+  flex: 0 0 90px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.invite-count input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.invite-result {
+  margin: 12px 0 0;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
