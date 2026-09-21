@@ -1,6 +1,6 @@
 import { LANGUAGES, languageByCode, looksKorean, translate } from "./translator.js";
 import {
-  loadState, saveState, loadSettings, saveSettings,
+  loadState, saveState, stateKey, loadSettings, saveSettings,
   newRoom, newMessage, exportBackup, parseBackup,
   collectChanges, mergeFromServer,
 } from "./store.js";
@@ -78,12 +78,7 @@ async function runSync({ silent = true } = {}) {
     const maxSeen = mergeFromServer(state, pulled);
     state.lastSyncAt = Math.max(since, maxSeen);
 
-    // 현재 방이 다른 기기에서 삭제됐을 수 있다.
-    if (!activeRoom()) {
-      if (!liveRooms().length) state.rooms.push(newRoom({ name: "영어 거래처", lang: "EN" }));
-      state.activeRoomId = liveRooms()[0].id;
-    }
-
+    ensureRoom();
     saveState(auth.user.id, state);
     renderAll();
   } catch (err) {
@@ -91,10 +86,29 @@ async function runSync({ silent = true } = {}) {
       handleSignedOut("로그인이 만료되었습니다. 다시 로그인해 주세요.");
       return;
     }
+    // 서버에 닿지 못해도 빈 화면을 보여주지는 않는다.
+    if (ensureRoom()) {
+      saveState(auth.user.id, state);
+      renderAll();
+    }
     if (!silent) toast(err.message || "동기화하지 못했습니다.");
   } finally {
     syncing = false;
   }
+}
+
+/** 방이 하나도 없거나 현재 방이 사라졌을 때 정리한다. */
+function ensureRoom() {
+  let changed = false;
+  if (!liveRooms().length) {
+    state.rooms.push(newRoom({ name: "영어 거래처", lang: "EN" }));
+    changed = true;
+  }
+  if (!activeRoom()) {
+    state.activeRoomId = liveRooms()[0].id;
+    changed = true;
+  }
+  return changed;
 }
 
 /* ---------- 렌더링 ---------- */
@@ -509,8 +523,10 @@ function bindEvents() {
 
 function startApp() {
   hideAuthScreen();
-  state = loadState(auth.user.id);
-  saveState(auth.user.id, state);
+  // 첫 동기화 전에는 기본 방을 만들지 않는다. 서버 기록과 중복되기 때문이다.
+  const firstTime = !localStorage.getItem(stateKey(auth.user.id));
+  state = loadState(auth.user.id, { createDefault: !firstTime });
+  if (!firstTime) saveState(auth.user.id, state);
   renderAll();
   autosize();
   runSync({ silent: false });

@@ -2,6 +2,8 @@
 // 서버와 동기화하므로 각 항목에 updatedAt(마지막 수정 시각)과 deleted(삭제 표시)를 함께 둔다.
 
 const LEGACY_STATE_KEY = "biztr.state.v1";
+// 로그인 이전 기록은 딱 한 계정에만 옮긴다 (같은 PC를 여러 사람이 쓰는 경우 대비).
+const LEGACY_DONE_KEY = "biztr.legacy.migrated";
 const SETTINGS_KEY = "biztr.settings.v1";
 const statePrefix = "biztr.state.v2.";
 
@@ -93,24 +95,32 @@ export function stateKey(userId) {
   return statePrefix + (userId || "local");
 }
 
-export function loadState(userId) {
+export function loadState(userId, { createDefault = true } = {}) {
   const key = stateKey(userId);
   let saved = read(key, null);
 
   // 로그인 이전에 이 기기에서 쓰던 기록을 첫 로그인 때 한 번 옮겨 온다.
-  if (!saved) {
+  if (!saved && !localStorage.getItem(LEGACY_DONE_KEY)) {
     const legacy = read(LEGACY_STATE_KEY, null);
-    if (legacy?.rooms?.length) saved = legacy;
+    if (legacy?.rooms?.length) {
+      saved = legacy;
+      try {
+        localStorage.setItem(LEGACY_DONE_KEY, String(Date.now()));
+      } catch {
+        /* 무시 */
+      }
+    }
   }
 
   const rooms = normalizeRooms(saved?.rooms);
   const alive = rooms.filter((r) => !r.deleted);
-  if (!alive.length) rooms.push(newRoom({ name: "영어 거래처", lang: "EN" }));
+  // 서버에서 기록을 받아오기 전이라면 빈 기본 방을 만들지 않는다 (중복 생성 방지).
+  if (!alive.length && createDefault) rooms.push(newRoom({ name: "영어 거래처", lang: "EN" }));
 
   const candidates = rooms.filter((r) => !r.deleted);
   const activeRoomId = candidates.some((r) => r.id === saved?.activeRoomId)
     ? saved.activeRoomId
-    : candidates[0].id;
+    : candidates[0]?.id ?? null;
 
   return { rooms, activeRoomId, lastSyncAt: Number(saved?.lastSyncAt) || 0 };
 }
