@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src 'self' https://api.anthropic.com; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'">
+  <meta name="theme-color" content="#1f3a5f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Biz 번역">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Biz 번역 — 비즈니스 번역 채팅</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 왼쪽: 채팅방 목록 -->
+    <aside id="sidebar" aria-label="채팅방 목록">
+      <div class="sidebar-head">
+        <div class="brand">
+          <img src="icons/icon.svg" alt="" width="28" height="28">
+          <span>Biz 번역</span>
+        </div>
+        <button id="btn-close-sidebar" class="icon-btn only-mobile" aria-label="목록 닫기">✕</button>
+      </div>
+      <button id="btn-new-room" class="primary-btn">＋ 새 채팅방</button>
+      <ul id="room-list"></ul>
+      <div class="sidebar-foot">
+        <button id="btn-settings" class="ghost-btn">⚙ 설정 · API 키</button>
+      </div>
+    </aside>
+    <div id="backdrop" hidden></div>
+
+    <!-- 오른쪽: 채팅 -->
+    <main id="chat">
+      <header id="chat-head">
+        <button id="btn-open-sidebar" class="icon-btn only-mobile" aria-label="채팅방 목록 열기">☰</button>
+        <div class="chat-title">
+          <h1 id="room-name">채팅방</h1>
+          <p id="room-meta"></p>
+        </div>
+        <button id="btn-room-settings" class="ghost-btn">채팅방 설정</button>
+      </header>
+
+      <section id="messages" aria-live="polite"></section>
+
+      <footer id="composer">
+        <textarea id="input" rows="1" placeholder="한국어 또는 상대 언어로 입력하세요"></textarea>
+        <button id="btn-send" class="primary-btn" aria-label="번역">번역</button>
+      </footer>
+    </main>
+  </div>
+
+  <!-- 채팅방 설정 -->
+  <dialog id="dlg-room">
+    <form method="dialog" class="dlg-body">
+      <h2 id="dlg-room-title">채팅방 설정</h2>
+      <label>채팅방 이름
+        <input id="room-f-name" type="text" maxlength="40" placeholder="예: ABC Foods 바이어">
+      </label>
+      <label>상대 언어 (한국어 ↔ 이 언어)
+        <select id="room-f-lang"></select>
+      </label>
+      <label>어조
+        <select id="room-f-tone">
+          <option value="formal">격식 (공식 메일·첫 거래)</option>
+          <option value="neutral">정중·표준 (일반 업무 메신저)</option>
+          <option value="friendly">친근 (오래된 거래처)</option>
+        </select>
+      </label>
+      <label>상황 메모 (선택)
+        <textarea id="room-f-context" rows="2" maxlength="500" placeholder="예: 우리는 식품 원료 수출사, 상대는 미국 유통사 구매 담당자"></textarea>
+      </label>
+      <label>용어집 (선택, 한 줄에 하나: 원어 = 번역어)
+        <textarea id="room-f-glossary" rows="3" maxlength="2000" placeholder="견적서 = quotation&#10;선적 = shipment"></textarea>
+      </label>
+      <div class="dlg-actions">
+        <button id="room-f-delete" type="button" class="danger-btn">채팅방 삭제</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost-btn dlg-cancel">취소</button>
+        <button id="room-f-save" value="save" class="primary-btn">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 앱 설정 -->
+  <dialog id="dlg-settings">
+    <form method="dialog" class="dlg-body">
+      <h2>설정</h2>
+      <label>Anthropic API 키
+        <input id="set-f-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-...">
+      </label>
+      <p class="hint">키는 이 기기의 브라우저에만 저장되며 번역 요청 시 Anthropic API로만 전송됩니다.
+        전용 키를 발급하고 콘솔에서 월 지출 한도를 설정해 두세요.</p>
+      <label>번역 모델
+        <select id="set-f-model">
+          <option value="claude-opus-5">Claude Opus 5 — 최고 품질 (기본)</option>
+          <option value="claude-sonnet-5">Claude Sonnet 5 — 빠르고 저렴</option>
+          <option value="claude-haiku-4-5">Claude Haiku 4.5 — 가장 저렴</option>
+        </select>
+      </label>
+      <div class="backup">
+        <h3>백업</h3>
+        <p class="hint">채팅 기록은 이 기기에만 저장됩니다. 기기를 바꾸거나 브라우저 데이터를 지우기 전에 내보내 두세요. (API 키는 백업에 포함되지 않습니다)</p>
+        <button id="set-f-export" type="button" class="ghost-btn">기록 내보내기 (JSON)</button>
+        <button id="set-f-import" type="button" class="ghost-btn">기록 가져오기</button>
+        <input id="set-f-file" type="file" accept="application/json,.json" hidden>
+      </div>
+      <p class="hint only-ios">iPhone/iPad: Safari의 공유 버튼 → "홈 화면에 추가"로 설치한 뒤 사용하세요. 설치하지 않으면 7일간 미접속 시 기록이 삭제될 수 있습니다.</p>
+      <div class="dlg-actions">
+        <span class="spacer"></span>
+        <button type="button" class="ghost-btn dlg-cancel">취소</button>
+        <button id="set-f-save" value="save" class="primary-btn">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
