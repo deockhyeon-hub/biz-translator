@@ -2,7 +2,7 @@
 // 번역 요청(api.anthropic.com)은 캐시하지 않는다.
 // 배포할 때 CACHE 버전을 올리면 이전 캐시가 정리된다.
 
-const CACHE = "biztr-shell-v5";
+const CACHE = "biztr-shell-v6";
 const SHELL = [
   "./", "index.html", "css/styles.css",
   "js/app.js", "js/api.js", "js/store.js", "js/translator.js", "js/images.js",

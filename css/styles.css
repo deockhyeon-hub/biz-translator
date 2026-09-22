@@ -182,8 +182,12 @@ button { cursor: pointer; }
   border-top: 1px solid var(--line);
 }
 .composer-row { display: flex; gap: 8px; align-items: flex-end; }
-.attach-btn { font-size: 20px; padding: 6px 8px; border-radius: 10px; line-height: 1.4; }
-.attach-btn:hover { background: var(--bg); }
+.attach-btn {
+  display: grid; place-items: center;
+  padding: 9px; border-radius: 10px;
+  color: var(--muted); border: 1px solid transparent;
+}
+.attach-btn:hover { background: var(--bg); border-color: var(--line); color: var(--accent); }
 #input {
   flex: 1; resize: none; max-height: 160px;
   border: 1px solid var(--line); border-radius: 12px;
@@ -462,16 +466,20 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .msg.me .msg-images { justify-content: flex-end; }
 .msg-images img,
 .msg-images .thumb-missing {
-  width: 108px;
-  height: 108px;
-  object-fit: cover;
+  height: 124px;
+  width: auto;
+  max-width: min(240px, 60vw);
+  object-fit: contain;
+  object-position: top;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: var(--bg);
+  background: #fff;
   display: block;
   cursor: zoom-in;
 }
 .msg-images .thumb-missing {
+  width: 124px;
+  background: var(--bg);
   display: grid;
   place-items: center;
   font-size: 11px;
