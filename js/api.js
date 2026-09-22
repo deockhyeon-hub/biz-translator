@@ -85,7 +85,7 @@ export const needsInvite = () => request("/api/auth/needs-invite");
 
 /* ---------- 번역 ---------- */
 
-export function translateRemote({ token, model, room, text, history = [], signal }) {
+export function translateRemote({ token, model, room, text, userNote = "", images = [], history = [], signal }) {
   return request("/api/translate", {
     method: "POST",
     token,
@@ -93,6 +93,9 @@ export function translateRemote({ token, model, room, text, history = [], signal
     body: {
       model,
       text,
+      // 이미지를 보낼 때만 채워진다. userNote는 "표만 번역해줘" 같은 사용자 지시.
+      userNote,
+      images,
       room: { lang: room.lang, tone: room.tone, context: room.context, glossary: room.glossary },
       history,
     },

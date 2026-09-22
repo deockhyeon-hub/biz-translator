@@ -53,10 +53,26 @@ export function newMessage(source, direction) {
     note: "",
     status: "pending",
     error: "",
+    // 이미지 첨부: 메타정보만 여기 두고 원본은 IndexedDB(js/images.js)에 따로 넣는다.
+    images: [],
+    userNote: "",
     ts: now,
     updatedAt: now,
     deleted: false,
   };
+}
+
+function normalizeImages(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((i) => i && typeof i === "object")
+    .slice(0, 4)
+    .map((i) => ({
+      name: String(i.name || "image").slice(0, 80),
+      mediaType: String(i.mediaType || "image/png"),
+      width: Number(i.width) || 0,
+      height: Number(i.height) || 0,
+    }));
 }
 
 function normalizeMessage(m) {
@@ -69,6 +85,8 @@ function normalizeMessage(m) {
     // 새로고침으로 끊긴 요청은 재시도할 수 있게 오류로 돌린다.
     status: m.status === "done" ? "done" : "error",
     error: m.status === "done" ? "" : m.error || "번역이 중단되었습니다.",
+    images: normalizeImages(m.images),
+    userNote: typeof m.userNote === "string" ? m.userNote : "",
     ts: Number(m.ts) || Date.now(),
     updatedAt: Number(m.updatedAt) || Number(m.ts) || Date.now(),
     deleted: !!m.deleted,
@@ -243,7 +261,8 @@ export function mergeFromServer(state, payload) {
 
     const local = room.messages.find((m) => m.id === sm.id);
     if (!local) {
-      room.messages.push({ id: sm.id, ...fields });
+      // 이미지 원본은 찍은 기기에만 있다. 다른 기기에서는 추출된 글자만 보인다.
+      room.messages.push({ id: sm.id, images: [], userNote: "", ...fields });
     } else if ((sm.updated_at || 0) > (local.updatedAt || 0)) {
       if (local.status !== "pending") Object.assign(local, fields);
     }

@@ -40,7 +40,7 @@ export function looksKorean(text) {
   return letters > 0 && hangul / letters >= 0.3;
 }
 
-export async function translate({ token, model, room, text, history = [], signal }) {
+export async function translate({ token, model, room, text, userNote = "", images = [], history = [], signal }) {
   if (!token) throw new TranslateError("로그인이 필요합니다.", { status: 401 });
 
   // 서버에는 문맥 파악에 필요한 최소한만 보낸다.
@@ -50,12 +50,14 @@ export async function translate({ token, model, room, text, history = [], signal
     .map((m) => ({ direction: m.direction, source: m.source, translation: m.translation }));
 
   try {
-    const data = await translateRemote({ token, model, room, text, history: trimmed, signal });
+    const data = await translateRemote({ token, model, room, text, userNote, images, history: trimmed, signal });
     return {
       direction: data.direction === "target->ko" ? "target->ko" : "ko->target",
       detectedLanguage: data.detectedLanguage ?? "",
       translation: (data.translation ?? "").trim(),
       note: (data.note ?? "").trim(),
+      // 이미지에서 읽어낸 원문 (이미지를 보냈을 때만 채워진다)
+      extractedText: (data.extractedText ?? "").trim(),
       model: data.model ?? model,
     };
   } catch (err) {

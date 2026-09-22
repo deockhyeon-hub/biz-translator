@@ -5,6 +5,10 @@ import {
   collectChanges, mergeFromServer,
 } from "./store.js";
 import * as api from "./api.js";
+import {
+  MAX_IMAGES, prepareImage, toPayload, toMeta,
+  saveImages, loadImages, removeImages,
+} from "./images.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -15,12 +19,16 @@ let editingRoomId = null;            // null이면 새 채팅방 생성 중
 let authMode = "login";              // "login" | "signup"
 let syncing = false;
 let syncTimer = null;
+let attachments = [];                // 아직 보내지 않은 첨부 이미지
+let dragDepth = 0;                   // dragenter/leave가 자식 요소마다 터져서 세어 둬야 한다
 
 const el = {
   app: $("app"), backdrop: $("backdrop"), auth: $("auth"),
   roomList: $("room-list"), roomName: $("room-name"), roomMeta: $("room-meta"),
   messages: $("messages"), input: $("input"), send: $("btn-send"),
-  dlgRoom: $("dlg-room"), dlgSettings: $("dlg-settings"), toast: $("toast"),
+  attachments: $("attachments"), fileImage: $("file-image"), dropzone: $("dropzone"),
+  dlgRoom: $("dlg-room"), dlgSettings: $("dlg-settings"), dlgImage: $("dlg-image"),
+  toast: $("toast"),
 };
 
 const liveRooms = () => state.rooms.filter((r) => !r.deleted);
@@ -135,15 +143,44 @@ function renderHead() {
   el.input.placeholder = `한국어 또는 ${lang.label}로 입력하세요`;
 }
 
+/** 첨부 이미지 썸네일. 원본은 이 기기 IndexedDB에만 있어서 비동기로 채운다. */
+function imagesNode(msg) {
+  const box = h("div", "msg-images");
+  msg.images.forEach((meta, index) => {
+    const img = document.createElement("img");
+    img.alt = meta.name || "첨부한 이미지";
+    img.loading = "lazy";
+    img.dataset.index = String(index);
+    box.append(img);
+  });
+
+  loadImages(msg.id).then((items) => {
+    for (const img of [...box.querySelectorAll("img")]) {
+      const item = items?.[Number(img.dataset.index)];
+      if (item?.dataUrl) img.src = item.dataUrl;
+      else img.replaceWith(h("div", "thumb-missing", "이 기기에 원본 없음"));
+    }
+  }).catch(() => { /* 썸네일은 못 보여도 번역문은 보인다 */ });
+
+  return box;
+}
+
 function messageNode(msg) {
   const side = msg.direction === "ko->target" ? "me" : "partner";
   const node = h("article", `msg ${side} ${msg.status === "done" ? "" : msg.status}`);
   node.dataset.id = msg.id;
-  node.append(h("p", "msg-source", msg.source));
+
+  const hasImages = !!msg.images?.length;
+  if (hasImages) node.append(imagesNode(msg));
+  if (msg.userNote) node.append(h("p", "msg-source", msg.userNote));
+  if (msg.source) {
+    if (hasImages) node.append(h("span", "msg-ocr", "이미지에서 읽은 글자"));
+    node.append(h("p", "msg-source", msg.source));
+  }
 
   if (msg.status === "pending") {
     const bubble = h("div", "bubble");
-    bubble.append(h("span", "dots", "번역 중"));
+    bubble.append(h("span", "dots", hasImages ? "글자를 읽고 번역하는 중" : "번역 중"));
     node.append(bubble);
     return node;
   }
@@ -178,6 +215,7 @@ function renderMessages({ scroll = true } = {}) {
     empty.append(
       h("strong", "", "비즈니스 문맥에 맞춰 번역합니다"),
       h("p", "", `한국어를 입력하면 ${lang}로, ${lang}를 입력하면 한국어로 번역합니다. 직역이 아니라 실제 업무 메일·메신저에서 쓰는 자연스러운 표현으로 다듬습니다.`),
+      h("p", "", "이미지도 됩니다. 메일 캡처·견적서 사진을 끌어다 놓거나 Ctrl+V로 붙여넣으면 속의 글자를 읽어 번역합니다."),
     );
     el.messages.replaceChildren(empty);
     return;
@@ -200,11 +238,36 @@ async function runTranslation(room, msg) {
   msg.error = "";
   if (room.id === state.activeRoomId) renderMessages();
 
+  // 이미지 원본은 찍은 기기에만 있다. 다른 기기면 추출된 글자만으로 다시 번역한다.
+  let images = [];
+  if (msg.images?.length) {
+    const stored = await loadImages(msg.id).catch(() => []);
+    images = (stored || []).map(toPayload);
+    if (!images.length && !msg.source) {
+      Object.assign(msg, {
+        status: "error",
+        error: "이 기기에는 원본 이미지가 남아 있지 않습니다. 이미지를 다시 첨부해 주세요.",
+      });
+      touch(msg);
+      persist();
+      if (room.id === state.activeRoomId) renderMessages();
+      return;
+    }
+  }
+
   try {
     const history = liveMessages(room).slice(0, liveMessages(room).indexOf(msg));
     const result = await translate({
-      token: auth.token, model: settings.model, room, text: msg.source, history,
+      token: auth.token,
+      model: settings.model,
+      room,
+      text: images.length ? "" : msg.source,
+      userNote: images.length ? msg.userNote || "" : "",
+      images,
+      history,
     });
+    // 이미지에서 읽어낸 글자를 원문으로 삼는다. 그래야 다른 기기·다음 번역 문맥에도 남는다.
+    if (images.length && result.extractedText) msg.source = result.extractedText;
     Object.assign(msg, {
       status: "done",
       direction: result.direction,
@@ -230,15 +293,82 @@ async function runTranslation(room, msg) {
 
 function send() {
   const text = el.input.value.trim();
-  if (!text) return;
+  const images = attachments;
+  if (!text && !images.length) return;
   const room = activeRoom();
   if (!room) return;
-  const msg = newMessage(text, looksKorean(text) ? "ko->target" : "target->ko");
+
+  const msg = newMessage(images.length ? "" : text, looksKorean(text) ? "ko->target" : "target->ko");
+  if (images.length) {
+    msg.images = images.map(toMeta);
+    msg.userNote = text;          // 함께 적은 말은 번역 대상이 아니라 지시로 다룬다
+    msg.direction = "target->ko"; // 대개 외국어 문서다. 최종 방향은 모델이 정한다.
+    saveImages(msg.id, images);   // 메모리 캐시는 즉시 채워져서 썸네일이 바로 보인다
+  }
+
   room.messages.push(msg);
   el.input.value = "";
+  setAttachments([]);
   autosize();
   persist({ sync: false });
   runTranslation(room, msg);
+}
+
+/* ---------- 이미지 첨부 ---------- */
+
+function setAttachments(list) {
+  attachments = list;
+  const box = el.attachments;
+  if (!attachments.length) {
+    box.replaceChildren();
+    box.hidden = true;
+    return;
+  }
+  const nodes = attachments.map((image, index) => {
+    const item = h("div", "attach-item");
+    const thumb = document.createElement("img");
+    thumb.src = image.dataUrl;
+    thumb.alt = image.name;
+    const remove = h("button", "attach-remove", "✕");
+    remove.type = "button";
+    remove.dataset.index = String(index);
+    remove.setAttribute("aria-label", `${image.name} 빼기`);
+    item.append(thumb, remove);
+    return item;
+  });
+  nodes.push(h("span", "attach-hint", `이미지 ${attachments.length}장 · 속의 글자를 읽어 번역합니다`));
+  box.replaceChildren(...nodes);
+  box.hidden = false;
+}
+
+async function addImageFiles(fileList) {
+  const files = [...(fileList || [])].filter((f) => f && f.type.startsWith("image/"));
+  if (!files.length) return;
+  const room = MAX_IMAGES - attachments.length;
+  if (room <= 0) {
+    toast(`이미지는 한 번에 ${MAX_IMAGES}장까지 보낼 수 있습니다.`);
+    return;
+  }
+
+  const added = [];
+  for (const file of files.slice(0, room)) {
+    try {
+      added.push(await prepareImage(file));
+    } catch (err) {
+      toast(err.message || "이미지를 읽지 못했습니다.");
+    }
+  }
+  if (added.length) setAttachments([...attachments, ...added]);
+  if (files.length > room) toast(`이미지는 한 번에 ${MAX_IMAGES}장까지만 보냅니다.`);
+}
+
+function hasFiles(event) {
+  return [...(event.dataTransfer?.types || [])].includes("Files");
+}
+
+function showImage(dataUrl) {
+  $("dlg-image-view").src = dataUrl;
+  el.dlgImage.showModal();
 }
 
 async function copyText(text) {
@@ -299,6 +429,7 @@ function deleteRoom() {
   if (!room || !confirm(`'${room.name}' 채팅방과 기록을 모두 삭제할까요?`)) return;
   room.deleted = true;
   touch(room);
+  for (const m of room.messages) if (m.images?.length) removeImages(m.id);
   if (!liveRooms().length) state.rooms.push(newRoom({ name: "영어 거래처", lang: "EN" }));
   if (state.activeRoomId === room.id) state.activeRoomId = liveRooms()[0].id;
   el.dlgRoom.close("cancel");
@@ -424,6 +555,7 @@ function handleSignedOut(message) {
   api.clearAuth();
   auth = null;
   state = null;
+  setAttachments([]);
   clearTimeout(syncTimer);
   showAuthScreen(message || "");
   setAuthMode("login");
@@ -464,6 +596,11 @@ function bindEvents() {
   });
 
   el.messages.addEventListener("click", (e) => {
+    const thumb = e.target.closest(".msg-images img");
+    if (thumb?.src) {
+      showImage(thumb.src);
+      return;
+    }
     const btn = e.target.closest("button[data-action]");
     if (!btn) return;
     const room = activeRoom();
@@ -474,14 +611,64 @@ function bindEvents() {
     if (btn.dataset.action === "delete") {
       msg.deleted = true;
       touch(msg);
+      if (msg.images?.length) removeImages(msg.id);
       persist();
       renderRooms();
       renderMessages({ scroll: false });
     }
   });
 
+  el.dlgImage.addEventListener("click", () => el.dlgImage.close());
+
   el.send.addEventListener("click", send);
   el.input.addEventListener("input", autosize);
+
+  // 이미지 첨부: 버튼 / 붙여넣기 / 드래그 앤 드롭 세 가지
+  $("btn-attach").addEventListener("click", () => el.fileImage.click());
+  el.fileImage.addEventListener("change", (e) => {
+    addImageFiles(e.target.files);
+    e.target.value = ""; // 같은 파일을 연속으로 고를 수 있게 비운다
+  });
+
+  el.attachments.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-index]");
+    if (!btn) return;
+    const index = Number(btn.dataset.index);
+    setAttachments(attachments.filter((_, i) => i !== index));
+  });
+
+  document.addEventListener("paste", (e) => {
+    if (el.app.hidden || document.querySelector("dialog[open]")) return;
+    const files = [...(e.clipboardData?.items || [])]
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter(Boolean);
+    if (!files.length) return;
+    e.preventDefault(); // 이미지 파일명이 입력란에 들어가지 않게 막는다
+    addImageFiles(files);
+  });
+
+  window.addEventListener("dragenter", (e) => {
+    if (el.app.hidden || !hasFiles(e)) return;
+    dragDepth += 1;
+    el.dropzone.hidden = false;
+  });
+  window.addEventListener("dragover", (e) => {
+    if (el.app.hidden || !hasFiles(e)) return;
+    e.preventDefault(); // 이게 없으면 drop 이벤트가 오지 않는다
+  });
+  window.addEventListener("dragleave", () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) el.dropzone.hidden = true;
+  });
+  window.addEventListener("drop", (e) => {
+    dragDepth = 0;
+    el.dropzone.hidden = true;
+    if (el.app.hidden || !hasFiles(e)) return;
+    e.preventDefault();
+    addImageFiles(e.dataTransfer.files);
+  });
+
   el.input.addEventListener("keydown", (e) => {
     // 한글 조합 중 Enter는 전송하지 않는다. 터치 기기에서는 Enter가 줄바꿈이다.
     const touchDevice = matchMedia("(pointer: coarse)").matches;

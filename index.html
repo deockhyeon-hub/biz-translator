@@ -85,10 +85,24 @@
       <section id="messages" aria-live="polite"></section>
 
       <footer id="composer">
-        <textarea id="input" rows="1" placeholder="한국어 또는 상대 언어로 입력하세요"></textarea>
-        <button id="btn-send" class="primary-btn" aria-label="번역">번역</button>
+        <div id="attachments" class="attachments" hidden></div>
+        <div class="composer-row">
+          <button id="btn-attach" class="icon-btn attach-btn" aria-label="이미지 첨부"
+                  title="이미지 첨부 — 드래그해서 놓거나 Ctrl+V로 붙여넣어도 됩니다">🖼</button>
+          <textarea id="input" rows="1" placeholder="한국어 또는 상대 언어로 입력하세요"></textarea>
+          <button id="btn-send" class="primary-btn" aria-label="번역">번역</button>
+        </div>
+        <input id="file-image" type="file" accept="image/*" multiple hidden>
       </footer>
     </main>
+
+    <!-- 이미지 드래그 앤 드롭 -->
+    <div id="dropzone" class="dropzone" hidden>
+      <div class="dropzone-card">
+        <strong>이미지를 여기에 놓으세요</strong>
+        <span>사진·캡처 속 글자를 읽어서 번역합니다</span>
+      </div>
+    </div>
   </div>
 
   <!-- 채팅방 설정 -->
@@ -172,6 +186,11 @@
         <button id="set-f-save" value="save" class="primary-btn">저장</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- 첨부 이미지 크게 보기 -->
+  <dialog id="dlg-image" class="image-dialog">
+    <img id="dlg-image-view" alt="첨부한 이미지">
   </dialog>
 
   <div id="toast" role="status" hidden></div>

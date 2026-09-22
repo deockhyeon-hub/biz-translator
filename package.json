@@ -1,0 +1,17 @@
+{
+  "name": "biz-translator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "비즈니스 문맥 번역 채팅 PWA. 앱은 빌드 없이 그대로 배포되고, 이 package.json은 Cloudflare Worker 배포용이다.",
+  "scripts": {
+    "deploy:worker": "wrangler deploy",
+    "tail:worker": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "workerd": true
+  }
+}
