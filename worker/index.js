@@ -5,7 +5,7 @@
 //
 // 필요한 바인딩
 //  - D1 데이터베이스: DB
-//  - 시크릿: ANTHROPIC_API_KEY
+//  - 시크릿: ANTHROPIC_API_KEY (개인용 키라면 ANTHROPIC_WORKSPACE_ID 도)
 //  - (선택) 변수: ALLOWED_ORIGINS  쉼표로 구분한 허용 주소
 
 const DEFAULT_ORIGINS = [
@@ -392,6 +392,8 @@ const headers = {
 "anthropic-version": "2023-06-01",
 "x-api-key": env.ANTHROPIC_API_KEY,
 };
+// 워크스페이스에 묶이지 않은 개인용 키는 워크스페이스 ID 헤더가 있어야 한다.
+if (env.ANTHROPIC_WORKSPACE_ID) headers["anthropic-workspace-id"] = env.ANTHROPIC_WORKSPACE_ID;
 if (useFallbacks) {
 body.fallbacks = "default";
 headers["anthropic-beta"] = FALLBACK_BETA;
