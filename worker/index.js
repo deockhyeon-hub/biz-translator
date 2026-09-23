@@ -401,9 +401,11 @@ return { body, headers };
 
 function describeHttpError(status, apiMessage) {
 switch (status) {
+// 원인을 알아야 고칠 수 있으니 Anthropic 이 준 사유를 같이 보여준다. 키 값 자체는 응답에 들어있지 않다.
 case 401:
+return `서버에 등록된 API 키가 거부되었습니다(401). 키가 삭제·폐기되었거나 잘못 입력되었습니다. 관리자가 Anthropic 콘솔에서 새 키를 발급해 워커 시크릿(ANTHROPIC_API_KEY)을 교체해야 합니다.${apiMessage ? ` [${apiMessage}]` : ""}`;
 case 403:
-return "서버에 등록된 API 키에 문제가 있습니다. 관리자에게 알려주세요.";
+return `API 키에 권한이 없습니다(403). 조직·워크스페이스가 비활성화되었거나 이 모델을 쓸 수 없는 키입니다. 관리자에게 알려주세요.${apiMessage ? ` [${apiMessage}]` : ""}`;
 case 404: return "선택한 모델을 찾을 수 없습니다. 설정에서 모델을 바꿔 보세요.";
 case 413: return "입력이 너무 깁니다. 나눠서 번역해 주세요.";
 case 429: return "요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.";
@@ -456,6 +458,9 @@ const userNote = String(body.userNote || "").trim().slice(0, 1000);
 const { images = [], error: imageError } = normalizeImages(body.images);
 if (imageError) return fail(imageError, 413, request, env);
 if (!text && !images.length) return fail("번역할 내용이 없습니다.", 400, request, env);
+if (!env.ANTHROPIC_API_KEY) {
+return fail("서버에 API 키(ANTHROPIC_API_KEY)가 등록되어 있지 않습니다. 관리자가 워커 시크릿을 설정해야 합니다.", 500, request, env);
+}
 if (text.length > 8000) return fail("한 번에 보낼 수 있는 길이를 넘었습니다.", 413, request, env);
 
 const day = todayKey();
@@ -481,6 +486,7 @@ if (!res.ok && useFallbacks && res.status === 400) {
 
 if (!res.ok) {
 const apiMessage = data?.error?.message || "";
+console.error("anthropic error", res.status, data?.error?.type || "", apiMessage);
 const status = res.status === 401 || res.status === 403 ? 502 : res.status;
 return fail(describeHttpError(res.status, apiMessage), status, request, env);
 }
