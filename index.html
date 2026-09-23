@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; connect-src 'self' https://biz-translator-api.deockhyeon.workers.dev; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'">
-  <meta name="theme-color" content="#1f3a5f">
+  <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#15181c" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Biz 번역">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -13,7 +14,9 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="fonts/pretendard.css">
   <link rel="stylesheet" href="css/styles.css">
+  <script src="js/theme-boot.js"></script>
 </head>
 <body>
   <!-- 로그인 / 회원가입 -->
@@ -66,7 +69,7 @@
       <button id="btn-new-room" class="primary-btn">＋ 새 채팅방</button>
       <ul id="room-list"></ul>
       <div class="sidebar-foot">
-        <button id="btn-settings" class="ghost-btn">⚙ 설정 · 계정</button>
+        <button id="btn-settings" class="ghost-btn">설정 · 계정</button>
       </div>
     </aside>
     <div id="backdrop" hidden></div>
@@ -158,6 +161,23 @@
         <button id="set-f-logout" type="button" class="ghost-btn">로그아웃</button>
       </div>
       <p class="hint">채팅방과 기록은 계정에 저장되어 PC와 휴대폰에서 자동으로 동기화됩니다.</p>
+
+      <div class="field-row">
+        <label>화면 테마
+          <select id="set-f-theme">
+            <option value="auto">자동 (기기 설정 따름)</option>
+            <option value="light">밝게</option>
+            <option value="dark">어둡게 (밤에 눈이 편함)</option>
+          </select>
+        </label>
+        <label>글자 크기
+          <select id="set-f-size">
+            <option value="m">보통</option>
+            <option value="l">크게</option>
+            <option value="xl">아주 크게</option>
+          </select>
+        </label>
+      </div>
 
       <label>번역 모델
         <select id="set-f-model">

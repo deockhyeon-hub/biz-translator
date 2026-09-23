@@ -439,8 +439,19 @@ function deleteRoom() {
 
 /* ---------- 설정 · 백업 ---------- */
 
+/** 화면 테마·글자 크기를 적용한다. 첫 화면은 js/theme-boot.js 가 먼저 처리한다. */
+function applyDisplay({ theme, textSize } = settings) {
+  const root = document.documentElement;
+  if (theme === "light" || theme === "dark") root.dataset.theme = theme;
+  else delete root.dataset.theme;
+  if (textSize === "l" || textSize === "xl") root.dataset.size = textSize;
+  else delete root.dataset.size;
+}
+
 function openSettings() {
   $("set-f-model").value = settings.model;
+  $("set-f-theme").value = settings.theme || "auto";
+  $("set-f-size").value = settings.textSize || "m";
   $("set-account-email").textContent = auth?.user?.email ?? "";
   $("set-account-role").textContent = auth?.user?.role === "admin" ? "관리자" : "직원";
   $("set-admin").hidden = auth?.user?.role !== "admin";
@@ -686,8 +697,20 @@ function bindEvents() {
   el.dlgRoom.querySelector("form").addEventListener("submit", saveRoomDialog);
   $("room-f-delete").addEventListener("click", deleteRoom);
 
+  // 테마·글자 크기는 고르는 즉시 미리 보여주고, 취소하면 되돌린다.
+  const previewDisplay = () => applyDisplay({ theme: $("set-f-theme").value, textSize: $("set-f-size").value });
+  $("set-f-theme").addEventListener("change", previewDisplay);
+  $("set-f-size").addEventListener("change", previewDisplay);
+  el.dlgSettings.addEventListener("close", () => applyDisplay(settings));
+
   el.dlgSettings.querySelector("form").addEventListener("submit", () => {
-    settings = { ...settings, model: $("set-f-model").value };
+    settings = {
+      ...settings,
+      model: $("set-f-model").value,
+      theme: $("set-f-theme").value,
+      textSize: $("set-f-size").value,
+    };
+    applyDisplay(settings);
     if (!saveSettings(settings)) toast("설정을 저장하지 못했습니다.");
     else toast("설정을 저장했습니다.");
   });
@@ -727,6 +750,7 @@ function init() {
   }));
   if (/iPad|iPhone|iPod/.test(navigator.userAgent)) document.documentElement.classList.add("is-ios");
 
+  applyDisplay(settings);
   bindEvents();
   setAuthMode("login");
 

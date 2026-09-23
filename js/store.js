@@ -152,7 +152,8 @@ export function saveState(userId, state) {
 }
 
 export function loadSettings() {
-  return { model: "claude-sonnet-5", ...read(SETTINGS_KEY, {}) };
+  // theme: auto | light | dark, textSize: m | l | xl (이 기기에만 저장)
+  return { model: "claude-sonnet-5", theme: "auto", textSize: "m", ...read(SETTINGS_KEY, {}) };
 }
 
 export const saveSettings = (settings) => write(SETTINGS_KEY, settings);
